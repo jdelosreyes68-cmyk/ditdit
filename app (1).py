@@ -41,24 +41,29 @@ st.markdown(
     .stApp { background-color: #f4f7fb; }
     .block-container { padding-top: 2rem; padding-bottom: 2rem; max-width: 1300px; }
     h1, h2, h3, h4 { color: #0f3352; font-family: 'Segoe UI', sans-serif; letter-spacing: 0.2px; }
-    div[data-testid="stTabs"] button[role="tab"] {
-        background-color: #ffffff;
-        border: 1px solid #c9d6e3;
-        border-radius: 6px;
-        padding: 9px 18px;
-        margin-right: 6px;
-        color: #0f3352;
-        font-weight: 600;
-        font-size: 0.86rem;
+    section[data-testid="stSidebar"] { background: #eaf0f7; }
+    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { color: #0f3352; }
+    section[data-testid="stSidebar"] div.stButton > button {
+        width: 100%; border-radius: 9px; text-align: left;
+        min-height: 42px; border: 1px solid transparent;
+        font-weight: 600; transition: all 0.15s ease;
     }
-    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-        background-color: #0f3352;
-        color: #ffffff;
-        border-color: #0f3352;
-        box-shadow: 0 2px 8px rgba(15,51,82,0.25);
+    section[data-testid="stSidebar"] div.stButton > button[kind="secondary"] {
+        background: transparent; color: #24435f;
     }
-    div[data-testid="stTabs"] div[role="tablist"] { border-bottom: none; gap: 4px; }
-    div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { display: none; }
+    section[data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover {
+        background: #dce8f4; border-color: #c6d8e8; color: #0f3352;
+    }
+    section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+        background: #0f3352; color: #ffffff; border-color: #0f3352;
+    }
+    .sidebar-brand { padding: 6px 2px 14px 2px; }
+    .sidebar-brand small { color: #55718a; letter-spacing: 1.2px; font-weight: 700; }
+    .nav-group-label { color: #71869a; font-size: 0.68rem; font-weight: 800;
+        letter-spacing: 1.1px; margin: 14px 0 5px 2px; }
+    .page-kicker { color: #55718a; font-size: 0.82rem; margin-top: -8px; margin-bottom: 18px; }
+    .breadcrumb { color: #6b8297; font-size: 0.78rem; margin-bottom: 5px; }
+    .page-kicker { color: #55718a; font-size: 0.82rem; margin-top: -8px; margin-bottom: 18px; }
     div[data-testid="stMetric"] {
         background: #ffffff;
         border: 1px solid #dbe4ee;
@@ -478,7 +483,68 @@ if df.empty:
     st.info("No valid records remain after applying the study's data rules.")
     st.stop()
 
-st.title("Community Conservation Behavior Analytics")
+# Grouped sidebar navigation with a persistent active-page state.
+PAGES = [
+    "Overview", "Respondent Profile", "Conservation Measures",
+    "Behavioral Segments", "Predictive Performance", "Predictors", "Open Responses",
+]
+PAGE_DESCRIPTIONS = {
+    "Overview": "A quick summary of the uploaded survey data and conservation indicators.",
+    "Respondent Profile": "Explore respondent demographics, distance groups, and target distribution.",
+    "Conservation Measures": "Review awareness, attitude, behavior, and participation scores.",
+    "Behavioral Segments": "Examine K-Means clusters, segment profiles, and conservation risk levels.",
+    "Predictive Performance": "Compare classification models and inspect their prediction performance.",
+    "Predictors": "Review the variables associated with predicted future participation.",
+    "Open Responses": "Read and explore respondents' written suggestions and observations.",
+}
+PAGE_ICONS = {
+    "Overview": "🏠", "Respondent Profile": "👥", "Conservation Measures": "🌿",
+    "Behavioral Segments": "🧩", "Predictive Performance": "🎯",
+    "Predictors": "📈", "Open Responses": "💬",
+}
+NAV_GROUPS = {
+    "MAIN": ["Overview"],
+    "EXPLORE DATA": ["Respondent Profile", "Conservation Measures", "Open Responses"],
+    "ANALYTICS": ["Behavioral Segments", "Predictive Performance", "Predictors"],
+}
+
+if "active_page" not in st.session_state or st.session_state.active_page not in PAGES:
+    st.session_state.active_page = "Overview"
+
+def navigate_to(page):
+    st.session_state.active_page = page
+
+st.sidebar.markdown(
+    "<div class='sidebar-brand'><div style='font-size:1.65rem'>🌾</div>"
+    "<div style='font-size:1.05rem;font-weight:800;color:#0f3352'>AGUSAN MARSH</div>"
+    "<small>CONSERVATION ANALYTICS</small></div>",
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown("<div class='nav-group-label'>DASHBOARD MENU</div>", unsafe_allow_html=True)
+for group_name, group_pages in NAV_GROUPS.items():
+    if group_name != "MAIN":
+        st.sidebar.markdown(f"<div class='nav-group-label'>{group_name}</div>", unsafe_allow_html=True)
+    for page in group_pages:
+        st.sidebar.button(
+            f"{PAGE_ICONS[page]}  {page}",
+            key=f"nav_{page.lower().replace(' ', '_')}",
+            type="primary" if st.session_state.active_page == page else "secondary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=(page,),
+        )
+
+active_page = st.session_state.active_page
+page_number = PAGES.index(active_page) + 1
+st.sidebar.divider()
+st.sidebar.caption(f"Viewing section {page_number} of {len(PAGES)}")
+st.sidebar.progress(page_number / len(PAGES))
+st.sidebar.caption("Choose a menu item above to move between dashboard sections.")
+
+st.title("🌿 Community Conservation Behavior Analytics")
+st.markdown(f"<div class='breadcrumb'>DASHBOARD  /  {active_page.upper()}</div>", unsafe_allow_html=True)
+st.subheader(f"{PAGE_ICONS[active_page]}  {active_page}")
+st.markdown(f"<div class='page-kicker'>{PAGE_DESCRIPTIONS[active_page]}</div>", unsafe_allow_html=True)
 st.markdown(
     f"<span class='chip'>{len(df)} records</span>"
     f"<span class='chip'>{df['AGE'].replace('', np.nan).nunique()} age groups</span>"
@@ -494,12 +560,16 @@ k3.metric("Attitude", round(df["ATTITUDE_SCORE"].mean(), 2), round(df["ATTITUDE_
 k4.metric("Behavior", round(df["BEHAVIOR_SCORE"].mean(), 2), round(df["BEHAVIOR_SCORE"].std(), 2))
 k5.metric("Participation", round(df["PARTICIPATION_SCORE"].mean(), 2), round(df["PARTICIPATION_SCORE"].std(), 2))
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Respondent Profile", "Conservation Measures", "Behavioral Segments",
-    "Predictive Performance", "Predictors", "Open Responses",
-])
+if active_page == "Overview":
+    st.markdown("### Study at a glance")
+    st.write("Use the navigation menu on the left to explore respondent characteristics, conservation measures, behavioral segments, model performance, predictors, and open-ended responses.")
+    overview_cols = st.columns(3)
+    overview_cols[0].metric("Labeled outcomes", int(df["TARGET_LABEL"].notna().sum()))
+    overview_cols[1].metric("Missing target labels", int(df["TARGET_LABEL"].isna().sum()))
+    overview_cols[2].metric("Available sections", len(PAGES) - 1)
+    st.info("Start with **Respondent Profile**, then review **Conservation Measures** and **Behavioral Segments** before interpreting the predictive models.")
 
-with tab1:
+if active_page == "Respondent Profile":
     c1, c2, c3 = st.columns([1.2, 1, 1])
     with c1:
         age_counts = df["AGE"].replace("", np.nan).dropna().value_counts().reset_index()
@@ -553,7 +623,7 @@ with tab1:
         fig = px.imshow(target_dist, text_auto=True, color_continuous_scale="Blues", labels=dict(x="Likelihood", y="Distance", color="Percent"))
         st.plotly_chart(fig, use_container_width=True)
 
-with tab2:
+if active_page == "Conservation Measures":
     c1, c2 = st.columns([1.1, 1])
     with c1:
         summary = pd.DataFrame({
@@ -591,7 +661,7 @@ with tab2:
 
     st.caption("Section scores aggregate the Likert items. Reverse-coded items are inverted before averaging.")
 
-with tab3:
+if active_page == "Behavioral Segments":
     scaled = build_cluster_matrix(df)
     k_table, inertias = k_search(scaled)
 
@@ -650,7 +720,7 @@ with tab3:
         st.markdown("### Cluster Summary Table")
         st.dataframe(profile[["SEGMENT", "N", "SHARE", "COMPOSITE", "RISK"]].round(2), use_container_width=True)
 
-with tab4:
+if active_page == "Predictive Performance":
     metrics, fi, roc_data, cm_data, preds = classify(df)
     if metrics is None:
         st.info("The binarized target does not contain enough usable records to train classifiers.")
@@ -689,7 +759,7 @@ with tab4:
 
         st.caption("Metrics computed on a stratified 20 percent holdout. Preprocessing is fitted on training data only. Rows with ambiguous or missing Q31 answers are excluded.")
 
-with tab5:
+if active_page == "Predictors":
     metrics, fi, roc_data, cm_data, preds = classify(df)
     if fi is not None:
         fig = px.bar(fi.sort_values("Importance"), x="Importance", y="Feature", orientation="h", color="Importance", color_continuous_scale="Teal", title="Random Forest Permutation Feature Importance")
@@ -708,7 +778,7 @@ with tab5:
 
     st.caption("Random Forest feature importance is measured using permutation importance on the held-out test set. Association tests use ANOVA for grouped demographics, point-biserial for gender, and Spearman for distance.")
 
-with tab6:
+if active_page == "Open Responses":
     for col, label in [("Q34", "Suggestions"), ("Q35", "Observed Problems"), ("Q36", "Barriers and Motivations")]:
         values = df[col].apply(clean_text)
         values = values[values.str.len() > 0].dropna().head(15)
