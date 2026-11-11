@@ -20,10 +20,15 @@ from sklearn.metrics import (
     silhouette_score,
 )
 from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.naive_bayes import GaussianNB
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.inspection import permutation_importance
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -294,51 +299,131 @@ def profile_clusters(df, labels):
     ]
     return frame, profile
 
-def classify(frame):
-    usable = frame[frame["TARGET_LABEL"].notna()].copy()
-    demo = pd.get_dummies(usable[["AGE", "GENDER", "EDUCATION", "OCCUPATION", "DISTANCE_NORM"]])
-    X = pd.concat([usable[SECTIONS].reset_index(drop=True), demo.reset_index(drop=True)], axis=1).fillna(0)
-    y = usable["TARGET_LABEL"].map({"High": 1, "Low/Neutral": 0}).reset_index(drop=True)
 
-    if y.nunique() < 2 or len(y) < 20:
+def classify(frame):
+    """Train classifiers to predict Q31 using predictors that do not include Q26-Q30.
+
+    Q26-Q30 measure willingness to join future activities, so their aggregate
+    PARTICIPATION_SCORE is excluded from X when Q31 is the future-participation
+    target. Preprocessing is fitted only on the training data through Pipeline.
+    """
+    usable = frame[frame["TARGET_LABEL"].notna()].copy()
+
+    # Predictors: awareness, attitude, current behavior, and demographics.
+    # PARTICIPATION_SCORE is intentionally excluded because it is calculated
+    # from Q26-Q30, which are closely related to the future-intention target Q31.
+    numeric_features = [
+        "AWARENESS_SCORE",
+        "ATTITUDE_SCORE",
+        "BEHAVIOR_SCORE",
+    ]
+    categorical_features = [
+        "AGE",
+        "GENDER",
+        "EDUCATION",
+        "OCCUPATION",
+        "DISTANCE_NORM",
+    ]
+    feature_columns = numeric_features + categorical_features
+    X = usable[feature_columns].copy()
+    y = usable["TARGET_LABEL"].map({"High": 1, "Low/Neutral": 0})
+
+    valid = y.notna()
+    X = X.loc[valid].reset_index(drop=True)
+    y = y.loc[valid].astype(int).reset_index(drop=True)
+
+    if y.nunique() < 2 or len(y) < 20 or y.value_counts().min() < 2:
         return None, None, None, None, None
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
-    models = {
-        "Decision Tree": DecisionTreeClassifier(criterion="gini", random_state=42, max_depth=6, min_samples_leaf=3),
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        stratify=y,
+        random_state=42,
+    )
+
+    # Imputation and categorical encoding are learned from training data only.
+    numeric_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+    ])
+    categorical_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+    ])
+    preprocessor = ColumnTransformer(transformers=[
+        ("numeric", numeric_transformer, numeric_features),
+        ("categorical", categorical_transformer, categorical_features),
+    ])
+
+    model_definitions = {
+        "Decision Tree": DecisionTreeClassifier(
+            criterion="gini",
+            random_state=42,
+            max_depth=6,
+            min_samples_leaf=3,
+        ),
         "Naive Bayes": GaussianNB(),
-        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=300,
+            random_state=42,
+            class_weight="balanced",
+            min_samples_leaf=2,
+        ),
     }
+
     rows, roc_data, cm_data, preds = [], {}, {}, {}
-    rf_model = None
-    for name, model in models.items():
+    rf_pipeline = None
+
+    for name, estimator in model_definitions.items():
+        model = Pipeline(steps=[
+            ("preprocessor", preprocessor),
+            ("classifier", estimator),
+        ])
         model.fit(X_train, y_train)
         pred = model.predict(X_test)
         proba = model.predict_proba(X_test)[:, 1]
-        auc = roc_auc_score(y_test, proba)
+
+        auc = roc_auc_score(y_test, proba) if y_test.nunique() == 2 else np.nan
         rows.append({
             "Model": name,
             "Accuracy": round(accuracy_score(y_test, pred), 4),
             "Precision": round(precision_score(y_test, pred, zero_division=0), 4),
             "Recall": round(recall_score(y_test, pred, zero_division=0), 4),
             "F1": round(f1_score(y_test, pred, zero_division=0), 4),
-            "AUC": round(auc, 4),
+            "AUC": round(auc, 4) if pd.notna(auc) else np.nan,
         })
-        cm_data[name] = confusion_matrix(y_test, pred)
-        fpr, tpr, _ = roc_curve(y_test, proba)
-        roc_data[name] = (fpr, tpr, auc)
+        cm_data[name] = confusion_matrix(y_test, pred, labels=[0, 1])
+        if pd.notna(auc):
+            fpr, tpr, _ = roc_curve(y_test, proba)
+            roc_data[name] = (fpr, tpr, auc)
         preds[name] = (y_test.reset_index(drop=True), pred)
+
         if name == "Random Forest":
-            rf_model = model
+            rf_pipeline = model
 
     metrics = pd.DataFrame(rows)
     fi = None
-    if rf_model is not None:
+
+    # Permutation importance is calculated on held-out test records and on
+    # original input columns, making the results easier to interpret.
+    if rf_pipeline is not None and y_test.nunique() == 2:
+        perm = permutation_importance(
+            rf_pipeline,
+            X_test,
+            y_test,
+            n_repeats=20,
+            random_state=42,
+            scoring="roc_auc",
+        )
         fi = pd.DataFrame({
-            "Feature": X.columns,
-            "Importance": np.round(rf_model.feature_importances_, 5),
+            "Feature": X_test.columns,
+            "Importance": np.round(perm.importances_mean, 5),
+            "Importance_SD": np.round(perm.importances_std, 5),
         }).sort_values("Importance", ascending=False).reset_index(drop=True)
-        fi["Cumulative"] = fi["Importance"].cumsum().round(4)
+        fi["Cumulative"] = fi["Importance"].clip(lower=0).cumsum().round(4)
+
     return metrics, fi, roc_data, cm_data, preds
 
 def demographic_tests(frame):
@@ -602,12 +687,12 @@ with tab4:
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
-        st.caption("Metrics computed on the stratified 20 percent holdout. Rows with ambiguous compound answers were excluded.")
+        st.caption("Metrics computed on a stratified 20 percent holdout. Preprocessing is fitted on training data only. Rows with ambiguous or missing Q31 answers are excluded.")
 
 with tab5:
     metrics, fi, roc_data, cm_data, preds = classify(df)
     if fi is not None:
-        fig = px.bar(fi.sort_values("Importance"), x="Importance", y="Feature", orientation="h", color="Importance", color_continuous_scale="Teal", title="Random Forest Feature Importance")
+        fig = px.bar(fi.sort_values("Importance"), x="Importance", y="Feature", orientation="h", color="Importance", color_continuous_scale="Teal", title="Random Forest Permutation Feature Importance")
         st.plotly_chart(fig, use_container_width=True)
         st.dataframe(fi, use_container_width=True)
     else:
@@ -621,7 +706,7 @@ with tab5:
     else:
         st.info("No demographic association test had sufficient grouped data.")
 
-    st.caption("Feature importance uses mean decrease in impurity. Association tests use ANOVA for grouped demographics, point-biserial for gender, and Spearman for distance.")
+    st.caption("Random Forest feature importance is measured using permutation importance on the held-out test set. Association tests use ANOVA for grouped demographics, point-biserial for gender, and Spearman for distance.")
 
 with tab6:
     for col, label in [("Q34", "Suggestions"), ("Q35", "Observed Problems"), ("Q36", "Barriers and Motivations")]:
